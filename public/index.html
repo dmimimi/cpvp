@@ -3,7 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Minecraft Crystal PvP (Optimized Voxel Engine)</title>
+    <title>Minecraft Crystal PvP (Multiplayer)</title>
+    <!-- 1. Add Socket.io CDN -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <style>
         body {
             margin: 0; overflow: hidden;
@@ -11,6 +13,27 @@
             background-color: #87CEEB; user-select: none;
         }
         canvas { display: block; }
+        
+        /* Multiplayer Lobby UI Styles */
+        #lobby-screen {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: #222; z-index: 2000; display: flex; flex-direction: column;
+            align-items: center; justify-content: center; color: white;
+        }
+        .lobby-box {
+            background: rgba(0, 0, 0, 0.85); border: 4px solid #555;
+            padding: 40px; border-radius: 10px; text-align: center;
+        }
+        .lobby-title { color: #ffaa00; font-size: 3rem; margin-top: 0; }
+        .lobby-input {
+            width: 100%; padding: 15px; margin-bottom: 15px; box-sizing: border-box;
+            font-size: 1.2rem; text-transform: uppercase;
+        }
+        .lobby-btn {
+            background: #00e676; padding: 15px 30px; font-size: 1.5rem;
+            font-weight: bold; cursor: pointer; color: white; border: none; border-radius: 4px;
+        }
+
         #ui-layer {
             position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
             pointer-events: none;
@@ -88,8 +111,8 @@
         
         #blocker {
             position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
-            background: rgba(0, 0, 0, 0.85); display: flex; flex-direction: column;
-            justify-content: center; align-items: center; color: white;
+            background: rgba(0, 0, 0, 0.85); display: none; /* Modified to hide initially */
+            flex-direction: column; justify-content: center; align-items: center; color: white;
             pointer-events: auto; z-index: 100;
         }
         #instructions { text-align: center; line-height: 1.8; font-size: 18px; }
@@ -137,12 +160,8 @@
             border-color: #373737 #fff #fff #373737; position: relative;
             display: flex; justify-content: center; align-items: center; cursor: pointer;
         }
-        .inv-slot:hover {
-            background: #a0a0a0;
-        }
-        .svg-icon {
-            width: 80%; height: 80%; pointer-events: none;
-        }
+        .inv-slot:hover { background: #a0a0a0; }
+        .svg-icon { width: 80%; height: 80%; pointer-events: none; }
 
         /* Death & Totem Animation Effects */
         #death-overlay {
@@ -156,10 +175,8 @@
         #death-overlay p { font-size: 24px; font-weight: bold; }
 
         #totem-pop {
-            position: absolute; top: 50%; left: 50%;
-            width: 150px; height: 150px;
-            pointer-events: none; z-index: 300;
-            animation: totemScale 2s ease-out forwards;
+            position: absolute; top: 50%; left: 50%; width: 150px; height: 150px;
+            pointer-events: none; z-index: 300; animation: totemScale 2s ease-out forwards;
         }
         @keyframes totemScale {
             0% { transform: translate(-50%, 50vh) scale(0); opacity: 0; }
@@ -172,8 +189,7 @@
         }
         .totem-particle {
             position: absolute; width: 8px; height: 8px; border-radius: 50%;
-            pointer-events: none; z-index: 299;
-            box-shadow: 0 0 8px currentColor;
+            pointer-events: none; z-index: 299; box-shadow: 0 0 8px currentColor;
         }
         #totem-flash {
             position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
@@ -186,9 +202,19 @@
 </head>
 <body>
 
+    <!-- 1. Lobby UI Injection -->
+    <div id="lobby-screen">
+        <div class="lobby-box">
+            <h1 class="lobby-title">Crystal PvP</h1>
+            <input type="text" id="playerNameInput" class="lobby-input" placeholder="ENTER NAME">
+            <input type="text" id="roomCodeInput" class="lobby-input" placeholder="ROOM CODE">
+            <button onclick="window.joinServer()" class="lobby-btn">JOIN SERVER</button>
+        </div>
+    </div>
+
     <div id="blocker">
         <div id="instructions">
-            <h1 style="color:#ffaa00;">Crystal PvP Simulator (Accurate Hitboxes)</h1>
+            <h1 style="color:#ffaa00;">Crystal PvP Simulator (Multiplayer)</h1>
             <p style="margin: 0; font-size: 20px;">Click anywhere outside the menu to Start</p>
             
             <div id="settings-panel">
@@ -267,6 +293,107 @@
     <script type="module">
         import * as THREE from 'three';
 
+        // 2. Add Multiplayer Globals
+        let socket; 
+        let currentRoom = ""; 
+        let playerName = ""; 
+        let remotePlayers = {}; 
+        let isMultiplayerActive = false;
+
+        // 2. Multiplayer Connection Logic
+        window.joinServer = function() {
+            playerName = document.getElementById('playerNameInput').value.trim();
+            currentRoom = document.getElementById('roomCodeInput').value.trim();
+            
+            if (!playerName || !currentRoom) {
+                alert("Please enter a Name and a Room Code.");
+                return;
+            }
+
+            // Initialize Socket with Vercel configuration
+            socket = io({ path: '/socket.io/' });
+
+            socket.on('connect', () => {
+                socket.emit('join_game', { name: playerName, room: currentRoom });
+            });
+
+            socket.on('game_joined', () => {
+                document.getElementById('lobby-screen').style.display = 'none';
+                isMultiplayerActive = true;
+                document.body.requestPointerLock();
+            });
+
+            socket.on('player_joined', (data) => {
+                if (data.id !== socket.id) {
+                    spawnRemotePlayer(data.id, data.name, data.pos);
+                }
+            });
+
+            socket.on('player_update', (data) => {
+                if (remotePlayers[data.id]) {
+                    remotePlayers[data.id].mesh.position.copy(data.pos);
+                    remotePlayers[data.id].mesh.rotation.y = data.rot;
+                } else if (data.id !== socket.id) {
+                    spawnRemotePlayer(data.id, data.name || "PLAYER", data.pos);
+                }
+            });
+
+            socket.on('sync_block', (data) => {
+                const { x, y, z, type } = data;
+                if (!voxels.has(`${x},${y},${z}`)) {
+                    placeDynamicCube(x, y, z, type, true);
+                }
+            });
+
+            socket.on('sync_crystal', (data) => {
+                placeCrystal(new THREE.Vector3(data.pos.x, data.pos.y, data.pos.z), true);
+            });
+
+            socket.on('sync_detonation', (data) => {
+                detonate(new THREE.Vector3(data.pos.x, data.pos.y, data.pos.z), data.type, true);
+            });
+            
+            // Allow this client to take damage sent over network
+            socket.on('take_damage', (data) => {
+                damagePlayer(data.amount, 0.5, new THREE.Vector3(0, -100, 0)); 
+            });
+
+            socket.on('player_left', (id) => {
+                if (remotePlayers[id]) {
+                    scene.remove(remotePlayers[id].mesh);
+                    delete remotePlayers[id];
+                }
+            });
+
+            // Position & Rotation Sync Loop (20 times/sec)
+            setInterval(() => {
+                if (isMultiplayerActive && socket && playerHealth > 0) {
+                    socket.emit('player_update', {
+                        room: currentRoom,
+                        pos: playerPos,
+                        rot: camera.rotation.order === 'YXZ' ? camera.rotation.y : 0
+                    });
+                }
+            }, 50);
+        };
+
+        // 3. Implement Remote Player Meshes
+        function spawnRemotePlayer(id, name, pos) {
+            const geo = new THREE.BoxGeometry(0.6, 1.8, 0.6);
+            const playerColor = new THREE.Color().setHSL(Math.random(), 0.8, 0.5);
+            const mat = new THREE.MeshLambertMaterial({ color: playerColor });
+            const mesh = new THREE.Mesh(geo, mat);
+            
+            if (pos) {
+                mesh.position.set(pos.x, pos.y, pos.z);
+            }
+            
+            // Assign userData for Raycaster checks
+            mesh.userData = { isPlayer: true, id: id };
+            scene.add(mesh);
+            remotePlayers[id] = { mesh: mesh, name: name };
+        }
+
         // --- KEYBINDS SYSTEM ---
         let keybinds = {
             forward: 'KeyW', left: 'KeyA', backward: 'KeyS', right: 'KeyD',
@@ -296,11 +423,9 @@
             for (const [key, label] of Object.entries(bindLabels)) {
                 const row = document.createElement('div');
                 row.className = 'keybind-row';
-                
                 const span = document.createElement('span');
                 span.className = 'keybind-label';
                 span.innerText = label;
-                
                 const btn = document.createElement('button');
                 btn.className = 'keybind-btn';
                 btn.innerText = formatKey(keybinds[key]);
@@ -311,7 +436,6 @@
                     isRebinding = true;
                     bindingKey = key;
                 };
-                
                 row.appendChild(span);
                 row.appendChild(btn);
                 grid.appendChild(row);
@@ -342,7 +466,6 @@
         let dummyVel = new THREE.Vector3(0, 0, 0);
         const dummySize = new THREE.Vector3(0.6, 1.8, 0.6);
         
-        // Healing & Saturation Mechanics
         let playerHealth = 20;
         let playerHunger = 20;
         let playerSaturation = 5.0;
@@ -361,7 +484,6 @@
         let currentSlot = 1; 
         const clock = new THREE.Clock();
 
-        // --- INVENTORY STATE ---
         let isInventoryOpen = false;
         let inventory = Array(27).fill('totem');
         let offhandItem = null;
@@ -379,25 +501,20 @@
           <rect x="12" y="8" width="1" height="3" fill="#e5c83b"/>
           <rect x="6" y="10" width="4" height="4" fill="#e5c83b"/>
           <rect x="5" y="14" width="6" height="1" fill="#e5c83b"/>
-          <!-- Eyes -->
           <rect x="6" y="4" width="1" height="1" fill="#00ff00"/>
           <rect x="9" y="4" width="1" height="1" fill="#00ff00"/>
-          <!-- Shading -->
           <rect x="7" y="5" width="2" height="1" fill="#d4a32a"/>
           <rect x="7" y="11" width="2" height="2" fill="#d4a32a"/>
         </svg>`;
 
-        // --- VOXEL GRID & PARTICLES ---
         const voxels = new Map(); 
         const dynamicMeshes =[]; 
         const crystals =[]; 
         const visualExplosions =[];
         
-        // Crit Particles
         let critMaterial;
         const critParticles = [];
 
-        // Terrains
         let stoneInstanced, bedrockInstanced;
         const zeroMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
 
@@ -433,11 +550,10 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.body.appendChild(renderer.domElement);
             
-            // Create Critical Hit Star Texture
             const canvas = document.createElement('canvas');
             canvas.width = 32; canvas.height = 32;
             const ctx = canvas.getContext('2d');
-            ctx.fillStyle = '#d4cb9e'; // Beige Minecraft crit color
+            ctx.fillStyle = '#d4cb9e'; 
             ctx.beginPath();
             ctx.moveTo(16, 0); ctx.lineTo(20, 12); ctx.lineTo(32, 16); ctx.lineTo(20, 20);
             ctx.lineTo(16, 32); ctx.lineTo(12, 20); ctx.lineTo(0, 16); ctx.lineTo(12, 12);
@@ -453,8 +569,10 @@
             updateHealthUI();
             updateHungerUI(); 
 
+            // 6. PointerLock Adjustments (Wrapped with isMultiplayerActive check)
             document.addEventListener('click', (e) => {
                 if (e.target.closest('#settings-panel') || isRebinding) return; 
+                if (!isMultiplayerActive) return; // Wait until lobby joined
                 if (!isInventoryOpen && document.pointerLockElement !== document.body && e.target.closest('#inventory-screen') === null && playerHealth > 0) {
                     document.body.requestPointerLock();
                 }
@@ -464,7 +582,7 @@
                 if (document.pointerLockElement === document.body) {
                     blocker.style.display = 'none';
                 } else {
-                    if (!isInventoryOpen && playerHealth > 0) {
+                    if (!isInventoryOpen && playerHealth > 0 && isMultiplayerActive) {
                         blocker.style.display = 'flex';
                         moveForward = moveBackward = moveLeft = moveRight = false;
                         isEating = false; 
@@ -489,7 +607,6 @@
             window.addEventListener('resize', onWindowResize);
         }
 
-        // --- INVENTORY LOGIC ---
         function toggleInventory() {
             if (playerHealth <= 0 || isRebinding) return; 
             isInventoryOpen = !isInventoryOpen;
@@ -503,7 +620,7 @@
                 initInventoryUI();
             } else {
                 invScreen.style.display = 'none';
-                document.body.requestPointerLock();
+                if (isMultiplayerActive) document.body.requestPointerLock();
             }
         }
 
@@ -547,7 +664,6 @@
             }
         }
 
-        // --- WORLD GENERATION ---
         function generateOptimizedWorld() {
             const mapSize = 20;
             const depth = 20;  
@@ -616,7 +732,6 @@
             }
         }
 
-        // --- INPUTS ---
         function onKeyDown(e) {
             if (isRebinding && bindingKey) {
                 e.preventDefault();
@@ -628,7 +743,7 @@
                 return;
             }
 
-            if (playerHealth <= 0) return; 
+            if (playerHealth <= 0 || !isMultiplayerActive) return; 
 
             if (e.code === keybinds.inventory) {
                 toggleInventory();
@@ -660,7 +775,7 @@
         }
 
         function onKeyUp(e) {
-            if (isRebinding || isInventoryOpen || playerHealth <= 0) return;
+            if (isRebinding || isInventoryOpen || playerHealth <= 0 || !isMultiplayerActive) return;
             
             if (e.code === keybinds.forward) moveForward = false;
             else if (e.code === keybinds.left) moveLeft = false;
@@ -681,13 +796,15 @@
         }
 
         function onMouseDown(e) {
-            if (document.pointerLockElement !== document.body || playerHealth <= 0 || isInventoryOpen || isRebinding) return;
+            if (document.pointerLockElement !== document.body || playerHealth <= 0 || isInventoryOpen || isRebinding || !isMultiplayerActive) return;
 
             const raycaster = new THREE.Raycaster();
             raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
 
+            // 5. Inject remote players into raycaster interactables
             const hitboxes = crystals.map(c => c.children.find(ch => ch.userData.isCrystalHitbox));
-            const interactables =[dummy, stoneInstanced, bedrockInstanced, ...dynamicMeshes, ...hitboxes];
+            const remotePlayerMeshes = Object.values(remotePlayers).map(rp => rp.mesh);
+            const interactables = [dummy, stoneInstanced, bedrockInstanced, ...dynamicMeshes, ...hitboxes, ...remotePlayerMeshes];
             const hits = raycaster.intersectObjects(interactables, false);
 
             if (e.button === 2 && currentSlot === 6) { 
@@ -713,7 +830,8 @@
                         detonate(obj.userData.parent.position.clone(), 'crystal');
                         removeCrystal(obj.userData.parent);
                     } 
-                    else if (obj.userData.isDummy && hit.distance < 4) {
+                    else if ((obj.userData.isDummy || obj.userData.isPlayer) && hit.distance < 4) {
+                        // 5. Damage Calculations for both Dummy and Remote Players
                         if (attackCooldown <= 0) {
                             const isSword = (currentSlot === 1);
                             attackCooldown = isSword ? 0.5 : 0.2; 
@@ -721,21 +839,27 @@
                             let damage = isSword ? 2 : 0;
                             let isCrit = false;
 
-                            // Crit condition: downwards jump portion & not on ground
                             if (isSword && playerVel.y < -0.1 && !canJump) {
                                 isCrit = true;
                                 damage *= 1.5; 
                             }
 
-                            if (damage > 0) damageDummy(damage);
-                            if (isCrit) spawnCritParticles(hit.point);
+                            if (obj.userData.isDummy) {
+                                if (damage > 0) damageDummy(damage);
+                                if (isCrit) spawnCritParticles(hit.point);
 
-                            const dir = dummyPos.clone().sub(playerPos).normalize();
-                            const kbMult = isSword ? 1.8 : 1.0; 
-                            
-                            dummyVel.x += dir.x * 6 * kbMult; 
-                            dummyVel.z += dir.z * 6 * kbMult; 
-                            dummyVel.y = 3.5 * kbMult; 
+                                const dir = dummyPos.clone().sub(playerPos).normalize();
+                                const kbMult = isSword ? 1.8 : 1.0; 
+                                dummyVel.x += dir.x * 6 * kbMult; 
+                                dummyVel.z += dir.z * 6 * kbMult; 
+                                dummyVel.y = 3.5 * kbMult; 
+                            } 
+                            else if (obj.userData.isPlayer) {
+                                if (damage > 0) {
+                                    if (socket) socket.emit('damage_player', { room: currentRoom, targetId: obj.userData.id, amount: damage });
+                                    if (isCrit) spawnCritParticles(hit.point);
+                                }
+                            }
                         }
                     }
                 }
@@ -752,7 +876,7 @@
                         }
                     }
 
-                    if (obj.userData.isDummy || obj.userData.isCrystalHitbox) return;
+                    if (obj.userData.isDummy || obj.userData.isPlayer || obj.userData.isCrystalHitbox) return;
 
                     if (currentSlot === 3) { // End Crystal
                         const clickedPos = hit.point.clone().add(normal.clone().multiplyScalar(-0.1));
@@ -815,7 +939,8 @@
             }
         }
 
-        function placeDynamicCube(x, y, z, type) {
+        // 4. Intercept Block Placement
+        function placeDynamicCube(x, y, z, type, fromNetwork = false) {
             const geo = new THREE.BoxGeometry(1, 1, 1);
             let mat;
             if (type === 'obsidian') mat = new THREE.MeshLambertMaterial({ color: 0x150520 });
@@ -829,9 +954,15 @@
             scene.add(mesh);
             dynamicMeshes.push(mesh);
             voxels.set(`${x},${y},${z}`, { type: type, mesh: mesh });
+
+            // Network Sync
+            if (!fromNetwork && isMultiplayerActive && socket) {
+                socket.emit('place_block', { room: currentRoom, key: `${x},${y},${z}`, type, pos: {x,y,z} });
+            }
         }
 
-        function placeCrystal(pos) {
+        // 4. Intercept Crystal Placement
+        function placeCrystal(pos, fromNetwork = false) {
             const group = new THREE.Group();
             group.position.copy(pos); 
 
@@ -860,6 +991,11 @@
             group.userData = { type: 'crystal', outer: outerCube, inner: innerCube, dead: false };
             scene.add(group);
             crystals.push(group);
+
+            // Network Sync
+            if (!fromNetwork && isMultiplayerActive && socket) {
+                socket.emit('place_crystal', { room: currentRoom, pos });
+            }
         }
 
         function updateAnchorVisual(anchor) {
@@ -960,7 +1096,6 @@
             return postEnchantDamage;
         }
 
-        // --- HEALTH, SATURATION & TOTEM MECHANIC ---
         function damagePlayer(damage, impact, blastOrigin) {
             if (playerAbsorption > 0) {
                 if (damage <= playerAbsorption) {
@@ -1191,12 +1326,17 @@
             playerVel.set(0, 0, 0); 
         }
 
-        // --- EXPLOSIONS ---
-        function detonate(center, type) {
+        // 4. Intercept Explosions
+        function detonate(center, type, fromNetwork = false) {
+            // Network Sync
+            if (!fromNetwork && isMultiplayerActive && socket) {
+                socket.emit('detonate', { room: currentRoom, pos: center, type });
+            }
+
             const power = type === 'crystal' ? 6 : 5;
             let radius = power * 2;
             if (type === 'anchor') {
-                radius *= 0.5625; // Further reduced anchor radius
+                radius *= 0.5625; 
             }
             const isHemisphere = (type === 'crystal');
             
@@ -1209,7 +1349,6 @@
             scene.add(sphere);
             visualExplosions.push({ mesh: sphere, life: 1.0 });
 
-            // Damage Player
             const distToPlayer = playerPos.distanceTo(blastOrigin);
             if (distToPlayer <= radius) {
                 const bbMin = new THREE.Vector3(playerPos.x - playerSize.x/2, playerPos.y, playerPos.z - playerSize.z/2);
@@ -1223,7 +1362,6 @@
                 }
             }
 
-            // Damage Dummy
             const distToDummy = dummyPos.distanceTo(blastOrigin);
             if (distToDummy <= radius) {
                 const bbMin = new THREE.Vector3(dummyPos.x - dummySize.x/2, dummyPos.y, dummyPos.z - dummySize.z/2);
@@ -1286,7 +1424,7 @@
                     c.userData.dead = true; 
                     setTimeout(() => {
                         if (crystals.includes(c)) {
-                            detonate(c.position.clone(), 'crystal');
+                            detonate(c.position.clone(), 'crystal', fromNetwork);
                             removeCrystal(c);
                         }
                     }, 100);
@@ -1314,7 +1452,6 @@
             setTimeout(() => { if (dummyMaterial) dummyMaterial.color.setHex(0xff4444); }, 150);
         }
 
-        // --- PHYSICS ---
         function checkCollision(px, py, pz, size) {
             const minX = Math.floor(px - size.x/2 + 0.001); const maxX = Math.floor(px + size.x/2 - 0.001);
             const minY = Math.floor(py + 0.001);            const maxY = Math.floor(py + size.y - 0.001);
@@ -1365,7 +1502,6 @@
             return { pos: pos, vel: vel, onGround: onGround };
         }
 
-        // --- GAME LOOP ---
         function animate() {
             requestAnimationFrame(animate);
             const delta = Math.min(clock.getDelta(), 0.1);
@@ -1438,8 +1574,8 @@
                     critParticles.splice(i, 1);
                 } else {
                     p.mesh.position.addScaledVector(p.vel, delta);
-                    p.vel.y -= 10 * delta; // Gravity
-                    p.vel.x -= p.vel.x * 2 * delta; // Air resistance
+                    p.vel.y -= 10 * delta; 
+                    p.vel.x -= p.vel.x * 2 * delta; 
                     p.vel.z -= p.vel.z * 2 * delta;
                     p.mesh.scale.setScalar(p.life * 0.4); 
                 }
@@ -1447,11 +1583,11 @@
 
             playerVel.y -= 30 * delta; 
             
-            const friction = canJump ? 8.0 : 0.5; // High ground friction, low air friction
+            const friction = canJump ? 8.0 : 0.5; 
             playerVel.x -= playerVel.x * friction * delta;
             playerVel.z -= playerVel.z * friction * delta;
 
-            if (document.pointerLockElement === document.body && playerHealth > 0 && !isInventoryOpen) {
+            if (document.pointerLockElement === document.body && playerHealth > 0 && !isInventoryOpen && isMultiplayerActive) {
                 const speed = canJump ? 45.0 * delta : 3.0 * delta;
                 
                 const camDir = new THREE.Vector3(); camera.getWorldDirection(camDir);
@@ -1478,7 +1614,7 @@
             }
 
             dummyVel.y -= 30 * delta;
-            dummyVel.x -= dummyVel.x * 8.0 * delta; dummyVel.z -= dummyVel.z * 8.0 * delta; // Dummy friction
+            dummyVel.x -= dummyVel.x * 8.0 * delta; dummyVel.z -= dummyVel.z * 8.0 * delta; 
 
             const dMove = moveEntity(dummyPos, dummyVel, dummySize, delta);
             dummyPos = dMove.pos; dummyVel = dMove.vel;
