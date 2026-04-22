@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Minecraft Crystal PvP (Multiplayer)</title>
-    <!-- 1. Add Socket.io CDN -->
+    <!-- Socket.io CDN -->
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <style>
         body {
@@ -22,21 +22,30 @@
         }
         .lobby-box {
             background: rgba(0, 0, 0, 0.85); border: 4px solid #555;
-            padding: 40px; border-radius: 10px; text-align: center;
+            padding: 40px; border-radius: 10px; text-align: center; width: 350px;
         }
         .lobby-title { color: #ffaa00; font-size: 3rem; margin-top: 0; }
         .lobby-input {
             width: 100%; padding: 15px; margin-bottom: 15px; box-sizing: border-box;
-            font-size: 1.2rem; text-transform: uppercase;
+            font-size: 1.2rem; text-transform: uppercase; text-align: center;
         }
         .lobby-btn {
-            background: #00e676; padding: 15px 30px; font-size: 1.5rem;
-            font-weight: bold; cursor: pointer; color: white; border: none; border-radius: 4px;
+            padding: 15px; font-size: 1.2rem; font-weight: bold; cursor: pointer; 
+            color: white; border: none; border-radius: 4px; text-transform: uppercase;
         }
+        .btn-join { background: #00e676; }
+        .btn-join:hover { background: #00c853; }
+        .btn-host { background: #2196F3; }
+        .btn-host:hover { background: #1976D2; }
 
         #ui-layer {
             position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
             pointer-events: none;
+        }
+        #room-code-hud {
+            position: absolute; top: 15px; left: 15px; color: white; 
+            font-size: 18px; font-weight: bold; background: rgba(0,0,0,0.5); 
+            padding: 8px 15px; border-radius: 4px; display: none; border: 2px solid #555;
         }
         #crosshair {
             position: absolute; top: 50%; left: 50%;
@@ -111,7 +120,7 @@
         
         #blocker {
             position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
-            background: rgba(0, 0, 0, 0.85); display: none; /* Modified to hide initially */
+            background: rgba(0, 0, 0, 0.85); display: none;
             flex-direction: column; justify-content: center; align-items: center; color: white;
             pointer-events: auto; z-index: 100;
         }
@@ -202,13 +211,16 @@
 </head>
 <body>
 
-    <!-- 1. Lobby UI Injection -->
+    <!-- Lobby UI Injection -->
     <div id="lobby-screen">
         <div class="lobby-box">
             <h1 class="lobby-title">Crystal PvP</h1>
             <input type="text" id="playerNameInput" class="lobby-input" placeholder="ENTER NAME">
-            <input type="text" id="roomCodeInput" class="lobby-input" placeholder="ROOM CODE">
-            <button onclick="window.joinServer()" class="lobby-btn">JOIN SERVER</button>
+            <input type="text" id="roomCodeInput" class="lobby-input" placeholder="ROOM CODE (LEAVE BLANK TO HOST)">
+            <div style="display: flex; gap: 10px; width: 100%;">
+                <button onclick="window.joinServer()" class="lobby-btn btn-join" style="flex: 1;">JOIN</button>
+                <button onclick="window.hostServer()" class="lobby-btn btn-host" style="flex: 1;">HOST</button>
+            </div>
         </div>
     </div>
 
@@ -259,6 +271,11 @@
     </div>
 
     <div id="ui-layer">
+        <!-- Room Code HUD -->
+        <div id="room-code-hud">
+            Room: <span id="hud-room-code" style="color: #00e676;"></span>
+        </div>
+
         <div id="crosshair">
             +
             <div id="cooldown-bar"><div id="cooldown-fill"></div></div>
@@ -293,14 +310,27 @@
     <script type="module">
         import * as THREE from 'three';
 
-        // 2. Add Multiplayer Globals
+        // Multiplayer Globals
         let socket; 
         let currentRoom = ""; 
         let playerName = ""; 
         let remotePlayers = {}; 
         let isMultiplayerActive = false;
 
-        // 2. Multiplayer Connection Logic
+        // Host Server Logic
+        window.hostServer = function() {
+            const nameInput = document.getElementById('playerNameInput').value.trim();
+            if (!nameInput) {
+                alert("Please enter a Name before hosting.");
+                return;
+            }
+            // Generate Random 6 Character Room Code
+            const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+            document.getElementById('roomCodeInput').value = randomCode;
+            window.joinServer();
+        };
+
+        // Multiplayer Connection Logic
         window.joinServer = function() {
             playerName = document.getElementById('playerNameInput').value.trim();
             currentRoom = document.getElementById('roomCodeInput').value.trim();
@@ -319,6 +349,11 @@
 
             socket.on('game_joined', () => {
                 document.getElementById('lobby-screen').style.display = 'none';
+                
+                // Show HUD with Room Code
+                document.getElementById('hud-room-code').innerText = currentRoom;
+                document.getElementById('room-code-hud').style.display = 'block';
+
                 isMultiplayerActive = true;
                 document.body.requestPointerLock();
             });
@@ -377,7 +412,7 @@
             }, 50);
         };
 
-        // 3. Implement Remote Player Meshes
+        // Implement Remote Player Meshes
         function spawnRemotePlayer(id, name, pos) {
             const geo = new THREE.BoxGeometry(0.6, 1.8, 0.6);
             const playerColor = new THREE.Color().setHSL(Math.random(), 0.8, 0.5);
@@ -569,7 +604,7 @@
             updateHealthUI();
             updateHungerUI(); 
 
-            // 6. PointerLock Adjustments (Wrapped with isMultiplayerActive check)
+            // PointerLock Adjustments (Wrapped with isMultiplayerActive check)
             document.addEventListener('click', (e) => {
                 if (e.target.closest('#settings-panel') || isRebinding) return; 
                 if (!isMultiplayerActive) return; // Wait until lobby joined
@@ -801,7 +836,7 @@
             const raycaster = new THREE.Raycaster();
             raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
 
-            // 5. Inject remote players into raycaster interactables
+            // Inject remote players into raycaster interactables
             const hitboxes = crystals.map(c => c.children.find(ch => ch.userData.isCrystalHitbox));
             const remotePlayerMeshes = Object.values(remotePlayers).map(rp => rp.mesh);
             const interactables = [dummy, stoneInstanced, bedrockInstanced, ...dynamicMeshes, ...hitboxes, ...remotePlayerMeshes];
@@ -831,7 +866,7 @@
                         removeCrystal(obj.userData.parent);
                     } 
                     else if ((obj.userData.isDummy || obj.userData.isPlayer) && hit.distance < 4) {
-                        // 5. Damage Calculations for both Dummy and Remote Players
+                        // Damage Calculations for both Dummy and Remote Players
                         if (attackCooldown <= 0) {
                             const isSword = (currentSlot === 1);
                             attackCooldown = isSword ? 0.5 : 0.2; 
@@ -939,7 +974,7 @@
             }
         }
 
-        // 4. Intercept Block Placement
+        // Intercept Block Placement
         function placeDynamicCube(x, y, z, type, fromNetwork = false) {
             const geo = new THREE.BoxGeometry(1, 1, 1);
             let mat;
@@ -961,7 +996,7 @@
             }
         }
 
-        // 4. Intercept Crystal Placement
+        // Intercept Crystal Placement
         function placeCrystal(pos, fromNetwork = false) {
             const group = new THREE.Group();
             group.position.copy(pos); 
@@ -1326,7 +1361,7 @@
             playerVel.set(0, 0, 0); 
         }
 
-        // 4. Intercept Explosions
+        // Intercept Explosions
         function detonate(center, type, fromNetwork = false) {
             // Network Sync
             if (!fromNetwork && isMultiplayerActive && socket) {
